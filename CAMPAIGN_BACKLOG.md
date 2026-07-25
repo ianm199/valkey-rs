@@ -36,7 +36,12 @@ Baseline 2026-06-22: **382 pass / 0 diverge / 19 known-unsupported**, engine
 dispatches 27 of 200 in-scope commands (**173 missing**).
 Re-baselined 2026-07-18 (overnight verification run, PRs #11-#13): **2175
 fixtures, 2157 pass / 0 diverge / 18 known-unsupported** — evidence
-`harness/oracle/results/valdr-differential-20260718.txt`. NOTE: the wave
+`harness/oracle/results/valdr-differential-20260718.txt`.
+Gap report 2026-07-25: **17 in-scope commands missing**, 183 of 200 dispatched.
+They are not 17 independent packets — 8 are the blocking family awaiting a scope
+decision, 5 are nondeterministic reads that no current oracle mode can assert,
+2 are stream claim ops, 2 are introspection. See Waves 13-16; Wave 13 (one new
+oracle comparison mode) is what unblocks the largest share. NOTE: the wave
 checkboxes above had drifted far behind the implemented surface; when in doubt
 trust `valdr-surface-gap.sh` + the oracle, not the checkboxes.
 
@@ -100,6 +105,61 @@ Fixtures: new `stream.jsonl`. Split into sub-waves.
 
 ### Wave 12 — DUMP / RESTORE  `[x]`  (found already complete 2026-07-18; doc-comment corrections in PR #13)
 DUMP, RESTORE (RDB-serialization parity). Enables key migration in/out of the edge.
+
+### Wave 13 — Oracle: a draw-check comparison mode  `[x]`  (oracle 2160/0/18)
+Blocks Wave 14 entirely. The nondeterministic commands are not hard to implement;
+they are untestable under every mode the differential oracle currently has.
+`set_equal` sorts both replies and compares them, which works for SMEMBERS but
+not for a *draw*: the engine and valkey pick different members, so
+`["a"] != ["c"]` however you sort it.
+
+Add one mode — `draw_from` — asserting the reply's elements are all drawn from a
+fixture-declared candidate set and that the cardinality matches valkey's reply,
+instead of comparing the draws themselves. Roughly 20 lines in the existing
+`if mode == ...` chain in `harness/oracle/valdr-engine-differential.py`, plus the
+`VALID_MODES` tuple and the header docstring.
+
+While in there, add a `time_band` mode (seconds component within N of valkey's,
+the same shape as `ttl_band`) so TIME can be asserted rather than skipped.
+
+**Landed.** Both modes are live in `compare()` (`drawn_from_pool` /
+`time_within_band`), validated at fixture-load time (`draw_from` requires
+`candidates`, `time_band` requires `band`), documented in the header docstring
+and in the playbook's fixture-model section, and proven green by
+`harness/oracle/valdr-fixtures/draw-modes.jsonl` — 8 fixtures over commands the
+engine already dispatches (KEYS order divergence for the array draw shape, an
+`EVAL`-wrapped `KEYS` pick for the single-bulk and nil shapes, and an
+`EVAL`-synthesized `[seconds, microseconds]` frame off EXPIRETIME/PEXPIRETIME
+for `time_band`). `lazy_loader_kit.rs` treats `draw_from` as order-insensitive
+alongside `set_equal`, since the eager and lazy keyspaces iterate differently.
+
+### Wave 14 — Nondeterministic reads  `[ ]`  (unblocked; Wave 13 landed)
+SPOP, SRANDMEMBER, ZRANDMEMBER, HRANDFIELD, RANDOMKEY. Cover the count variants
+(positive count = distinct, negative count = with repeats — different semantics,
+both testable under `draw_from`), and SPOP's keyspace side effect. Removes 8
+lines from `known-unsupported.jsonl`, several of which carry a "random selection
+cannot..." reason that predates the modes that now exist.
+
+### Wave 15 — Introspection  `[ ]`  (TIME unblocked; `time_band` landed in Wave 13)
+OBJECT and TIME are dispatched by the engine (`lib.rs` KeyAccess arm) and were
+marked landed in Wave 3, yet the gap report still counts them missing — so the
+gap is in the subcommand surface, not the container. Diagnose before implementing:
+`OBJECT ENCODING` is the entry in `known-unsupported.jsonl`, and encoding names
+are an implementation detail valkey exposes verbatim (`listpack`, `intset`,
+`skiplist`, …), so this may be a deliberate deferral rather than a miss. Decide
+and record which.
+
+### Wave 16 — Blocking list/zset ops  `[?]`  **decision required before any code**
+BLPOP, BRPOP, BLMOVE, BLMPOP, BRPOPLPUSH, BZPOPMIN, BZPOPMAX, BZMPOP — 8 of the
+17 remaining. The gap report counts them in scope, but the scope-review note
+below says a request/response Durable Object cannot block a client across the
+loop. Both cannot be true. Resolve it first: either implement immediate-only
+variants (return the nil/timeout reply straight away, which is upstream-correct
+for an empty key at timeout and is what the current `ku-blpop` fixture already
+probes with a 0.05s timeout), or add them to the `exclude` list in
+`valdr-surface-gap.sh` so the report stops counting work nobody intends to do.
+Leaving them in scope indefinitely is what makes "17 remaining" read as further
+from exhaustive than it is.
 
 ### Scope-review (in `exclude` or debatable) `[?]`
 - Blocking: BLPOP, BRPOP, BLMOVE, BLMPOP, BRPOPLPUSH, BZPOPMIN, BZPOPMAX, BZMPOP —
