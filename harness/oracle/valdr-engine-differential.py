@@ -10,9 +10,13 @@ Fixture files are JSONL under harness/oracle/valdr-fixtures/. Each line:
     {"id": "<string>",
      "cmd": ["SET", "k", "v"],
      "now_millis": <optional u64, engine host clock; wall clock if absent>,
-     "mode": "exact" | "ttl_band" | "error_prefix" | "type_only" | "set_equal" | "scan_reply"
-             | "float_g10",
-     "band": <int, required for ttl_band>,
+     "mode": "exact" | "ttl_band" | "error_prefix" | "type_only" | "set_equal"
+             | "scan_reply" | "float_g10" | "draw_from" | "time_band",
+     "band": <int, required for ttl_band and time_band>,
+     "candidates": [<string>, ...], required for draw_from: the pool every drawn
+             element must come from. The two draws are never compared to each
+             other, only each engine element to the pool and the reply
+             cardinality to valkey's,
      "sleep_ms": <optional int, harness sleeps before dispatching this line>,
      "known_unsupported": <optional bool, record-only, never a verdict>}
 
@@ -35,7 +39,17 @@ import tempfile
 import time
 from pathlib import Path
 
-VALID_MODES = ("exact", "ttl_band", "error_prefix", "type_only", "set_equal", "scan_reply", "float_g10")
+VALID_MODES = (
+    "exact",
+    "ttl_band",
+    "error_prefix",
+    "type_only",
+    "set_equal",
+    "scan_reply",
+    "float_g10",
+    "draw_from",
+    "time_band",
+)
 PORT_RANGE = (38000, 38999)
 
 
@@ -169,7 +183,56 @@ def canonicalize_float_g10(node):
     return "%.10g" % parsed
 
 
-def compare(mode, band, engine_raw, valkey_raw):
+def drawn_from_pool(engine_node, valkey_node, candidates):
+    """Check a nondeterministic draw without comparing the two draws.
+
+    A draw (SPOP, SRANDMEMBER, ZRANDMEMBER, HRANDFIELD, RANDOMKEY) picks
+    different members in the engine than in valkey, so the only differential
+    assertions available are: the two replies have the same shape, the engine's
+    elements all come from the fixture-declared candidate pool, and the reply
+    cardinality equals valkey's. Both draw reply shapes are accepted — the
+    single bulk string (SPOP without a count) and the array (SPOP with one) —
+    including their nil and empty forms.
+    """
+    pool = {candidate.encode("utf-8") for candidate in candidates}
+    if engine_node[0] != valkey_node[0]:
+        return False
+    if (engine_node[1] is None) != (valkey_node[1] is None):
+        return False
+    if engine_node[1] is None:
+        return True
+    if engine_node[0] == "$":
+        return engine_node[1] in pool
+    if engine_node[0] != "*":
+        return False
+    if len(engine_node[1]) != len(valkey_node[1]):
+        return False
+    return all(
+        item[0] == "$" and item[1] is not None and item[1] in pool
+        for item in engine_node[1]
+    )
+
+
+def time_within_band(engine_node, valkey_node, band):
+    """Check a TIME reply's seconds component against valkey's, within band.
+
+    TIME replies with a 2-element array of bulk strings [seconds, microseconds];
+    the microseconds component is unassertable across two processes, and the
+    seconds component only agrees up to the clock ticking between the two
+    round-trips, so it is banded exactly like ttl_band bands a TTL.
+    """
+    seconds = []
+    for node in (engine_node, valkey_node):
+        if node[0] != "*" or node[1] is None or len(node[1]) != 2:
+            return False
+        head = node[1][0]
+        if head[0] != "$" or head[1] is None or not head[1].isdigit():
+            return False
+        seconds.append(int(head[1]))
+    return abs(seconds[0] - seconds[1]) <= band
+
+
+def compare(mode, band, candidates, engine_raw, valkey_raw):
     """Return True when the two raw frames agree under the fixture's mode."""
     if engine_raw == valkey_raw:
         return True
@@ -222,6 +285,10 @@ def compare(mode, band, engine_raw, valkey_raw):
         if engine_canon is None or valkey_canon is None:
             return False
         return engine_canon == valkey_canon
+    if mode == "draw_from":
+        return drawn_from_pool(engine_node, valkey_node, candidates)
+    if mode == "time_band":
+        return time_within_band(engine_node, valkey_node, band)
     raise HarnessError(f"unknown compare mode {mode!r}")
 
 
@@ -358,8 +425,10 @@ def load_fixture_lines(path):
             mode = fixture.get("mode", "exact")
             if mode not in VALID_MODES:
                 raise HarnessError(f"{path}:{line_no}: unknown mode {mode!r}")
-            if mode == "ttl_band" and "band" not in fixture:
-                raise HarnessError(f"{path}:{line_no}: ttl_band requires 'band'")
+            if mode in ("ttl_band", "time_band") and "band" not in fixture:
+                raise HarnessError(f"{path}:{line_no}: {mode} requires 'band'")
+            if mode == "draw_from" and "candidates" not in fixture:
+                raise HarnessError(f"{path}:{line_no}: draw_from requires 'candidates'")
             lines.append(fixture)
     return lines
 
@@ -399,9 +468,10 @@ def run_fixture_file(path, runner_bin, repo_root, valkey, crashed_ids):
             valkey_raw = valkey.roundtrip([arg.encode("utf-8") for arg in fixture["cmd"]])
             mode = fixture.get("mode", "exact")
             band = fixture.get("band", 0)
+            candidates = fixture.get("candidates", [])
             if fixture.get("known_unsupported"):
                 verdict = "KNOWN-UNSUPPORTED"
-            elif compare(mode, band, engine_raw, valkey_raw):
+            elif compare(mode, band, candidates, engine_raw, valkey_raw):
                 verdict = "PASS"
             else:
                 verdict = "DIVERGE"
@@ -513,7 +583,7 @@ def run_selftest():
     ]
     failures = []
     for label, engine_raw, valkey_raw, expected in cases:
-        actual = compare("float_g10", 0, engine_raw, valkey_raw)
+        actual = compare("float_g10", 0, [], engine_raw, valkey_raw)
         if actual != expected:
             failures.append(f"{label}: expected {expected}, got {actual}")
     if failures:

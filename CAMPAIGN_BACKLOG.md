@@ -106,7 +106,7 @@ Fixtures: new `stream.jsonl`. Split into sub-waves.
 ### Wave 12 — DUMP / RESTORE  `[x]`  (found already complete 2026-07-18; doc-comment corrections in PR #13)
 DUMP, RESTORE (RDB-serialization parity). Enables key migration in/out of the edge.
 
-### Wave 13 — Oracle: a draw-check comparison mode  `[ ]`  **do this first**
+### Wave 13 — Oracle: a draw-check comparison mode  `[x]`  (oracle 2160/0/18)
 Blocks Wave 14 entirely. The nondeterministic commands are not hard to implement;
 they are untestable under every mode the differential oracle currently has.
 `set_equal` sorts both replies and compares them, which works for SMEMBERS but
@@ -122,14 +122,25 @@ instead of comparing the draws themselves. Roughly 20 lines in the existing
 While in there, add a `time_band` mode (seconds component within N of valkey's,
 the same shape as `ttl_band`) so TIME can be asserted rather than skipped.
 
-### Wave 14 — Nondeterministic reads  `[ ]`  (blocked on Wave 13)
+**Landed.** Both modes are live in `compare()` (`drawn_from_pool` /
+`time_within_band`), validated at fixture-load time (`draw_from` requires
+`candidates`, `time_band` requires `band`), documented in the header docstring
+and in the playbook's fixture-model section, and proven green by
+`harness/oracle/valdr-fixtures/draw-modes.jsonl` — 8 fixtures over commands the
+engine already dispatches (KEYS order divergence for the array draw shape, an
+`EVAL`-wrapped `KEYS` pick for the single-bulk and nil shapes, and an
+`EVAL`-synthesized `[seconds, microseconds]` frame off EXPIRETIME/PEXPIRETIME
+for `time_band`). `lazy_loader_kit.rs` treats `draw_from` as order-insensitive
+alongside `set_equal`, since the eager and lazy keyspaces iterate differently.
+
+### Wave 14 — Nondeterministic reads  `[ ]`  (unblocked; Wave 13 landed)
 SPOP, SRANDMEMBER, ZRANDMEMBER, HRANDFIELD, RANDOMKEY. Cover the count variants
 (positive count = distinct, negative count = with repeats — different semantics,
 both testable under `draw_from`), and SPOP's keyspace side effect. Removes 8
 lines from `known-unsupported.jsonl`, several of which carry a "random selection
 cannot..." reason that predates the modes that now exist.
 
-### Wave 15 — Introspection  `[ ]`  (TIME blocked on Wave 13)
+### Wave 15 — Introspection  `[ ]`  (TIME unblocked; `time_band` landed in Wave 13)
 OBJECT and TIME are dispatched by the engine (`lib.rs` KeyAccess arm) and were
 marked landed in Wave 3, yet the gap report still counts them missing — so the
 gap is in the subcommand surface, not the container. Diagnose before implementing:

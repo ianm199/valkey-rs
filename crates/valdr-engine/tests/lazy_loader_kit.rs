@@ -310,13 +310,14 @@ fn scan_replies_equal(a: &RespFrame, b: &RespFrame) -> bool {
 }
 
 /// Apply the fixture's comparison mode between the eager and lazy replies.
-/// `set_equal`/`scan_reply` are order-insensitive (HashMap iteration order
-/// differs between the two engines); every other mode is byte-exact because,
-/// running on a shared deterministic clock with per-key round-trips, the two
-/// engines must agree to the byte.
+/// `set_equal`/`scan_reply`/`draw_from` are order-insensitive (HashMap
+/// iteration order differs between the two engines); every other mode is
+/// byte-exact because, running on a shared deterministic clock with per-key
+/// round-trips, the two engines must agree to the byte. `time_band` falls in
+/// the byte-exact bucket: both engines read the same injected clock.
 fn replies_match(mode: &str, eager: &RespFrame, lazy: &RespFrame) -> bool {
     match mode {
-        "set_equal" => frames_equal_unordered(eager, lazy),
+        "set_equal" | "draw_from" => frames_equal_unordered(eager, lazy),
         "scan_reply" => scan_replies_equal(eager, lazy),
         _ => resp_bytes(eager) == resp_bytes(lazy),
     }

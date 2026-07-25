@@ -1,0 +1,8 @@
+{"id": "dm-seed-hash", "cmd": ["HSET", "dm:h", "f1", "v1"]}
+{"id": "dm-seed-set", "cmd": ["SADD", "dm:s", "alpha"]}
+{"id": "dm-seed-string", "cmd": ["SET", "dm:str", "v"]}
+{"id": "dm-draw-array", "cmd": ["KEYS", "dm:*"], "mode": "draw_from", "candidates": ["dm:h", "dm:s", "dm:str"]}
+{"id": "dm-draw-array-empty", "cmd": ["KEYS", "dm:absent:*"], "mode": "draw_from", "candidates": ["dm:h", "dm:s", "dm:str"]}
+{"id": "dm-draw-bulk", "cmd": ["EVAL", "local k = redis.call('KEYS', 'dm:*') return k[1]", "0"], "mode": "draw_from", "candidates": ["dm:h", "dm:s", "dm:str"]}
+{"id": "dm-draw-bulk-nil", "cmd": ["EVAL", "local k = redis.call('KEYS', 'dm:absent:*') return k[1]", "0"], "mode": "draw_from", "candidates": ["dm:h", "dm:s", "dm:str"]}
+{"id": "dm-time-band", "cmd": ["EVAL", "redis.call('SET', KEYS[1], 'v') redis.call('EXPIRE', KEYS[1], 100) local s = redis.call('EXPIRETIME', KEYS[1]) - 100 local ms = redis.call('PEXPIRETIME', KEYS[1]) - 100000 return {string.format('%d', s), string.format('%d', (ms % 1000) * 1000)}", "1", "dm:t"], "mode": "time_band", "band": 2}

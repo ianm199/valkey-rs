@@ -44,6 +44,18 @@ Build success is **not** signal. A clean build with a divergence is a regression
   with an ABSOLUTE command (HEXPIREAT/HPEXPIREAT) and read it back with the
   absolute reader (HEXPIRETIME/HPEXPIRETIME) under `exact` mode — the returned
   timestamp is deterministic (it's the value you set), no clock drift.
+- **`draw_from` mode is for nondeterministic reads** (SPOP/SRANDMEMBER/
+  ZRANDMEMBER/HRANDFIELD/RANDOMKEY). The two draws are never compared to each
+  other: the fixture declares `"candidates": [...]`, and the oracle asserts the
+  engine's elements all come from that pool and the reply cardinality equals
+  valkey's. Both draw shapes work — the single bulk (no count) and the array
+  (with a count), plus their nil/empty forms. For `ZRANDMEMBER ... WITHSCORES`
+  the flattened scores are elements too, so list them in `candidates`.
+  Cardinality is the only length assertion, so a negative count (draw with
+  repeats) is asserted exactly as well as a positive one.
+- **`time_band` mode** bands a `TIME` reply's seconds component the way
+  `ttl_band` bands a scalar TTL; the microseconds component is not asserted.
+  Requires `"band": N`.
 - A `"known_unsupported": true` line is **record-only** (never a verdict). To
   "close" a gap: implement the command, then **remove the flag** (or rehome the
   fixture into its type file with a proper setup sequence) so it becomes a real
