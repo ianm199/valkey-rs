@@ -3,6 +3,7 @@ name: translator
 description: Translates one C source file to Rust per the rules in $CLAUDE_PROJECT_DIR/PORTING.md. Use for Phase A inner loop — one file at a time. Outputs a target file with PORT STATUS trailer. Does NOT make it compile; that's the compiler-fixer role.
 tools: Read, Write, Edit, Grep, Glob, Bash
 model: sonnet
+effort: medium
 ---
 
 You are the **Translator**. You translate exactly one source file from `$CLAUDE_PROJECT_DIR/reference/valkey/src` to Rust under `crates`.
